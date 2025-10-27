@@ -1,0 +1,510 @@
+---
+title: "Midterm Project - Final"
+author: "Gowri"
+execute:
+  warning: false
+  message: false
+format: 
+  html:
+    embed-resources: true
+fig-height: 10
+fig-width: 10
+editor: visual
+---
+
+## **Analyzing Asthma Hospitalization Rates in California, 2015–2022**
+
+**Background**\
+Asthma is a chronic inflammatory disease of the airways that causes episodes of wheezing, breathlessness, chest tightness, and coughing. It leads to thousands of hospitalizations each year and remains a major public-health concern in the United States.
+
+In California, about five million residents are affected, and asthma burden varies across counties. In this analysis, asthma burden is operationally defined as the annual rate of hospitalizations for asthma per 10 000 residents. Identifying county-level patterns can provide insight into factors such as air quality, access to preventive care, and socioeconomic conditions.
+
+This analysis uses data from the California Health and Human Services (CHHS) Open Data Portal, titled *“Asthma Hospitalization Rates by County (2015–2022).”* The dataset provides annual county-level hospitalization rates, population counts, and age-adjusted values derived from statewide hospital-discharge records.
+
+The CHHS dataset provides an *age-adjusted asthma hospitalization rate (per 10 000 residents)* for each county and year. These rates were pre-calculated by CHHS using standard population adjustment methods. For this project, only the “Total population / All ages” strata were analyzed to represent the overall asthma burden at the county level. No additional age adjustment was performed.
+
+#### Primary Question
+
+-   How have asthma-related hospitalization rates changed across California from 2015 to 2022?\
+    Which counties have consistently reported higher rates, and did statewide patterns shift during the COVID-19 years (2020–2021)?
+
+To answer this question, the analysis will:
+
+1.  Describe the dataset and assess completeness (2015–2022);
+
+2.  Identify relevant variables;
+
+3.  Examine statewide and county-level changes;
+
+4.  Highlight counties with consistently high burden; and
+
+5.  Evaluate whether rates shifted during the pandemic period.
+
+# Analysis
+
+1.  What information does the dataset include, and how complete are the records?
+
+    ```{r}
+
+    # Setup
+    library(knitr)
+    library(dplyr)
+    library(kableExtra)
+
+    # Reading the data
+    asthma <- read.csv("~/Downloads/asthma-hospitalization-rates-by-county-2015_2022.csv")
+
+    # Keeping the data from 2015–2022
+    asthma_15_22 <- subset(asthma, YEAR >= 2015 & YEAR <= 2022)
+
+    # Keeping All Ages / Total population only 
+    # STRATA will be named as "Total population" 
+    # STRATA.NAME and AGE.GROUP will be represented as "All ages" or "All Ages"
+
+    asthma_overall <- subset(
+      asthma_15_22,
+      (
+        # condition: labeled as Total population
+        STRATA %in% c("Total population", "Overall", "Total")
+      ) |
+      (
+        # Backup condition: STRATA is blank but is All Ages present (for 2020 data)
+        (is.na(STRATA) | STRATA == "") &
+        (is.na(STRATA.NAME) | STRATA.NAME %in% c("All ages", "All Ages")) &
+        (is.na(AGE.GROUP)   | AGE.GROUP   %in% c("All ages", "All Ages"))
+      )
+    )
+
+    # Removing non-county summary rows 
+    asthma_overall <- subset(
+      asthma_overall,
+      !(COUNTY %in% c("California", "All Counties", "Unknown"))
+    )
+
+
+    # Summary of the cleaned data
+    knitr::kable(
+      data.frame(
+        total_rows      = nrow(asthma_overall),
+        unique_years    = length(unique(asthma_overall$YEAR)),
+        unique_counties = length(unique(asthma_overall$COUNTY))
+      ),
+      caption = "Coverage after filtering (2015–2022, counties only)"
+    ) %>%
+      kable_styling(bootstrap_options = "striped", full_width = FALSE)
+
+
+    # Rows per year 
+    knitr::kable(
+      as.data.frame(table(asthma_overall$YEAR)),
+      col.names = c("YEAR", "N_rows"),
+      caption = "Rows per year after flexible filtering (should include 2020)"
+    ) %>%
+      kable_styling(bootstrap_options = "striped", full_width = FALSE)
+
+
+    # Missing values for each variable 
+    missing_table <- data.frame(
+      variable       = names(asthma_overall),
+      missing_values = sapply(asthma_overall, function(x) sum(is.na(x)))
+    )
+    knitr::kable(
+      missing_table,
+      caption = "Missing values by variable (2015–2022 filtered subset)"
+    ) %>%
+      kable_styling(bootstrap_options = "striped", full_width = FALSE)
+
+
+    # Preview the first 5 rows of key columns
+    knitr::kable(
+      head(asthma_overall[c("COUNTY","YEAR",
+                            "NUMBER.OF.HOSPITALIZATIONS",
+                            "AGE.ADJUSTED.HOSPITALIZATION.RATE")], 5),
+      caption = "Sample of cleaned dataset (first 5 rows, county–year level)"
+    ) %>%
+      kable_styling(bootstrap_options = "striped", full_width = FALSE)
+
+
+    ```
+
+Summary:
+
+After cleaning the CHHS hospitalization dataset to include only the *Total Population / All Ages* group for each county between 2015 and 2022, the cleaned file contains 464 observations across 58 counties and 8 years. This confirms full coverage across all counties and years. There are no records that are missing after filtering.
+
+Each year from 2015 to 2022 contains 58 rows, showing that data is balanced across time and that 2020 (the pandemic year**)** is included. This verifies that the all the counties are preserved for all the years under the study.
+
+The missing value summary indicates no missing entries for key variables such as County and Year, while Number of Hospitalizations and Age-Adjusted Hospitalization Rate have 49 and 95 missing values, respectively.
+
+A short preview of the cleaned dataset confirms the expected structure, which is one row per county-year combination, with numeric hospitalization counts and age-adjusted rates. 
+
+2.  Which variables from the CHHS Asthma Hospitalization Rates by County (2015–2022**)** dataset are relevant for analyzing statewide and county-level trends in asthma hospitalization rates between 2015 and 2022, and how can they be cleaned and standardized for analysis?
+
+    ```{r}
+
+    # Setup
+    library(knitr)
+
+    # Listing all available variables in the cleaned dataset
+    all_vars <- names(asthma_overall)
+
+    knitr::kable(
+      data.frame(all_variables = all_vars),
+      caption = "All variables available in the cleaned dataset (2015–2022)"
+    ) %>%
+      kable_styling(bootstrap_options = "striped", full_width = FALSE)
+
+
+    # Select only the key variables needed for statewide trend analysis
+    # COUNTY – geographic identifier
+    # YEAR – temporal identifier
+    # NUMBER.OF.HOSPITALIZATIONS – total hospital discharges
+    # AGE.ADJUSTED.HOSPITALIZATION.RATE – main standardized outcome (per 10,000 residents)
+    key_variables <- asthma_overall[, c("COUNTY", "YEAR",
+                                        "NUMBER.OF.HOSPITALIZATIONS",
+                                        "AGE.ADJUSTED.HOSPITALIZATION.RATE")]
+
+    # Renaming the variables for easy reading 
+    key_variables$RATE <- key_variables$AGE.ADJUSTED.HOSPITALIZATION.RATE
+
+    # Ensuring YEAR is numeric in case it was read as character
+    if (!is.numeric(key_variables$YEAR)) key_variables$YEAR <- as.integer(key_variables$YEAR)
+
+    # Checking for duplicate county–year combinations 
+    county_year_table <- table(key_variables$COUNTY, key_variables$YEAR)
+    duplicate_count <- sum(county_year_table > 1)
+
+    knitr::kable(
+      data.frame(duplicate_count = duplicate_count),
+      caption = "Number of county–year duplicates (should be 0 if data are clean)"
+    ) %>%
+      kable_styling(bootstrap_options = "striped", full_width = FALSE)
+
+
+    # Checking for missing values in the selected variables
+    missing_key <- data.frame(
+      variable = names(key_variables),
+      missing_values = sapply(key_variables, function(x) sum(is.na(x)))
+    )
+
+    knitr::kable(
+      missing_key,
+      caption = "Missing values in selected key variables"
+    ) %>%
+      kable_styling(bootstrap_options = "striped", full_width = FALSE)
+
+
+    # Preview of the first 5 rows of key variables to confirm structure
+    knitr::kable(
+      head(key_variables, 5),
+      caption = "Sample of key variables (first 5 rows, county–year level)",
+      align = c("l","c","c","c","c")
+    ) %>%
+      kable_styling(bootstrap_options = "striped", full_width = FALSE)
+
+
+    #  summary to confirm number of rows, years, and counties
+    knitr::kable(
+      data.frame(
+        total_rows      = nrow(key_variables),
+        unique_years    = length(unique(key_variables$YEAR)),
+        unique_counties = length(unique(key_variables$COUNTY))
+      ),
+      caption = "Coverage of key_variables (rows, years, counties)"
+    ) %>%
+      kable_styling(bootstrap_options = "striped", full_width = FALSE)
+
+
+    ```
+
+    After reviewing the cleaned dataset, eight variables were identified. The four essential variales for analyzing statewide asthma hospitalization trends are County, Year, Number of Hospitalizations, and Age-Adjusted Hospitalization Rate.
+
+    These variables describe each county’s location, the reporting year, the total number of hospitalizations due to asthma, and the standardized rate per 10 000 residents. All other fields (for example, *Strata*, *Age Group*, and *Comments*) were excluded because they represent sub-population details not needed for this statewide analysis.
+
+    The cleaned dataset contains 464 records, covering 58 counties across 8 years (2015–2022), with no duplicate county-year pairs. Missing-value checks show that hospitalization counts are missing for 49 rows and age-adjusted rates for 95 rows.
+
+    3.  How have average asthma hospitalization rates changed each year across California between 2015 and 2022?
+
+    ```{r}
+
+    # Setup
+    library(ggplot2)
+    library(knitr)
+
+    # 1) Computing statewide average rate for each year
+    # Each county contributes one record per year.
+
+    statewide_avg <- aggregate(RATE ~ YEAR,
+                               data = key_variables,
+                               FUN = mean,
+                               na.rm = TRUE)
+
+    # Arrangeing by year 
+    statewide_avg <- statewide_avg[order(statewide_avg$YEAR), ]
+    statewide_avg$RATE <- round(statewide_avg$RATE, 2)
+
+    # 2) Display statewide yearly averages as a formatted table
+    knitr::kable(
+      statewide_avg,
+      caption = "Table 3.1 – Average Asthma Hospitalization Rate (per 10 000 residents), California 2015–2022"
+    ) %>%
+      kable_styling(bootstrap_options = "striped", full_width = FALSE)
+
+
+    # 3) Bar chart – visualization (using base R)
+    bp <- barplot(
+      statewide_avg$RATE,
+      names.arg = statewide_avg$YEAR,
+      col = "skyblue",
+      border = NA,
+      ylim = c(0, max(statewide_avg$RATE) * 1.12),
+      xlab = "Year",
+      ylab = "Average Hospitalization Rate (per 10 000 residents)",
+      main = "Figure 3.1a – Asthma Hospitalization Rate by Year, California"
+    )
+
+    # Add numeric labels above each bar
+    text(
+      x = bp,
+      y = statewide_avg$RATE + (max(statewide_avg$RATE) * 0.02),
+      labels = statewide_avg$RATE,
+      cex = 0.8
+    )
+
+    # 4) Line chart – visualization 
+    ggplot(statewide_avg, aes(x = YEAR, y = RATE)) +
+      geom_col(fill = "lightgray", width = 0.5) +      # shaded base columns
+      geom_line(linewidth = 1.2) +
+      geom_point(size = 2.5) +
+      scale_x_continuous(breaks = statewide_avg$YEAR) +
+      labs(
+        title = "Figure 3.1b – Statewide Asthma Hospitalization Trend (2015–2022)",
+        x = "Year",
+        y = "Average Hospitalization Rate (per 10 000 residents)"
+      ) +
+      theme_bw() +
+      theme(
+        plot.title = element_text(hjust = 0.5, face = "bold"),
+        axis.title = element_text(face = "bold")
+      )
+
+    ```
+
+    Summary:\
+    The statewide average asthma hospitalization rate in California shows a steady decline from 2015 to 2020, followed by a gradual increase after 2021.
+
+    As shown in Table 3.1, the average rate dropped from 6.18 per 10 000 residents in 2015 to about 4.0 between 2016 and 2019, reaching its lowest point in 2020 (1.91). This sharp decrease coincides with the COVID-19 pandemic, when reduced healthcare utilization and public-health restrictions likely limited exposure to asthma triggers. After 2020, rates rose slightly to 2.09 in 2021 and 3.00 in 2022, suggesting that the earlier decline may have been influenced by pandemic-related restrictions.
+
+    Both the bar chart (Figure 3.1a) and line chart (Figure 3.1b) clearly show this pattern — a downward trend through 2020 followed by modest recovery. Overall, California experienced a notable reduction in asthma-related hospitalizations from 2015 to 2022, with the lowest rates observed during the pandemic years.
+
+    4.How have asthma hospitalization rates changed across individual California counties between 2015 and 2022?
+
+    ```{r}
+
+
+    library(ggplot2)
+    library(knitr)
+
+    # Making sure Year variable is numeric 
+    if (!is.numeric(key_variables$YEAR)) key_variables$YEAR <- as.integer(key_variables$YEAR)
+
+    # Calculating Average rate for each county across 2015–2022
+    county_means <- aggregate(RATE ~ COUNTY,
+                              data = key_variables,
+                              FUN = mean,
+                              na.rm = TRUE)
+
+    # Sorting from highest to lowest average rate
+    county_means <- county_means[order(-county_means$RATE), ]
+
+    #  Tables: Top 10 and Bottom 10 counties (remove row index labels for clarity)
+    top10    <- head(county_means, 10);  rownames(top10)    <- NULL
+    bottom10 <- tail(county_means, 10);  rownames(bottom10) <- NULL
+
+    knitr::kable(
+      top10,
+      digits = 2,
+      caption = "Table 4.1 – Top 10 Counties with Highest Average Asthma Hospitalization Rates (2015–2022)"
+    ) %>%
+      kable_styling(bootstrap_options = "striped", full_width = FALSE)
+
+
+    knitr::kable(
+      bottom10,
+      digits = 2,
+      caption = "Table 4.2 – Bottom 10 Counties with Lowest Average Asthma Hospitalization Rates (2015–2022)"
+    ) %>%
+      kable_styling(bootstrap_options = "striped", full_width = FALSE)
+
+
+    # 3) Bar plot — all counties (ranked)
+    ggplot(county_means, aes(x = reorder(COUNTY, RATE), y = RATE)) +
+      geom_col(fill = "steelblue") +
+      coord_flip() +
+      labs(
+        title = "Figure 4.3 – Average Asthma Hospitalization Rate by County (2015–2022)",
+        x = "County",
+        y = "Average Hospitalization Rate (per 10 000 residents)"
+      ) +
+      theme_bw() +
+      theme(
+        plot.title = element_text(hjust = 0.5, face = "bold"),
+        axis.title = element_text(face = "bold")
+      )
+
+    # Faceted line plot — yearly trend in each county 
+    # Order facets by each county's 2015–2022 average (high → low) for readability
+    county_order <- with(key_variables, tapply(RATE, COUNTY, mean, na.rm = TRUE))
+    key_variables$COUNTY <- factor(key_variables$COUNTY,
+                                   levels = names(sort(county_order, decreasing = TRUE)))
+
+    ggplot(key_variables, aes(x = YEAR, y = RATE, group = COUNTY)) +
+      geom_line(linewidth = 0.5, color = "steelblue", na.rm = TRUE) +
+      geom_point(size = 0.7, color = "steelblue", na.rm = TRUE) +
+      facet_wrap(~ COUNTY, scales = "free_y", ncol = 6) +
+      scale_x_continuous(breaks = c(2015, 2018, 2020, 2022)) +
+      labs(
+        title = "Figure 4.4 – Asthma Hospitalization Trends by County (2015–2022)",
+        x = "Year",
+        y = "Age-Adjusted Rate (per 10 000 residents)"
+      ) +
+      theme_bw() +
+      theme(
+        plot.title = element_text(hjust = 0.5, face = "bold"),
+        axis.title  = element_text(face = "bold"),
+        strip.text  = element_text(size = 6),
+        axis.text.x = element_text(size = 6)
+      )
+
+
+    # Figure 4.5 – All-County and Statewide Trend
+
+
+    ggplot(key_variables, aes(x = YEAR, y = RATE, group = COUNTY)) +
+      geom_line(alpha = 0.25, color = "skyblue3") +
+      geom_smooth(aes(group = 1), method = "loess", color = "black",
+                  linewidth = 1.2, se = FALSE) +
+      labs(
+        title = "Figure 4.5 – Statewide and County-Level Asthma Hospitalization Trends (2015–2022)",
+        subtitle = "Each faint blue line represents one county; bold black line shows statewide smooth average",
+        x = "Year",
+        y = "Age-Adjusted Hospitalization Rate (per 10 000 residents)"
+      ) +
+      theme_bw() +
+      theme(
+        plot.title = element_text(hjust = 0.5, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, size = 9),
+        axis.title = element_text(face = "bold")
+      )
+
+
+
+
+    ```
+
+**Summary:**
+
+Across California, asthma hospitalization rates varied widely from one county to another during 2015–2022. As shown in Table 4.1, the highest average rates were observed in Mono (12.00 per 10 000 residents), followed by Lassen (6.56), Lake (6.47), and Fresno (6.40). In contrast, Table 4.2 shows that counties such as Sonoma (2.72), Ventura (2.69), and Placer (2.60) had some of the lowest average rates. A few small rural counties (e.g., Alpine, Sierra, and Trinity) show 0.00 average rates, which likely reflects suppressed or unreported data due to very small case counts rather than the complete absence of hospitalizations.
+
+The bar chart (Figure 4.1) clearly displays this difference: the highest-rate counties have values nearly two to three times higher than the lowest-rate counties. The faceted line plot (Figure 4.3) shows that most counties share a similar pattern, a steady decline through 2019 and a noticeable drop in 2020 during the COVID-19 pandemic, followed by a small increase in 2021 and 2022. Finally, the statewide overlay (Figure 4.5) brings all counties together, where the faint blue lines show individual county trends and the bold black line summarizes the overall state pattern of decline and partial recovery after 2020.
+
+Overall, while most counties experienced the same statewide decline in asthma hospitalizations during the pandemic, the rate of hospitalizations remains uneven across California, with some rural and Central Valley counties showing a consistently higher burden than others.
+
+5.  How do counties and regions compare overall, and what spatial or geographic patterns are seen across California?
+
+```{r}
+
+# Setup
+library(ggplot2)
+library(maps)
+library(knitr)
+
+# Average asthma hospitalization rate by county (2015–2022)
+county_means <- aggregate(RATE ~ COUNTY,
+                          data = key_variables,
+                          FUN = mean,
+                          na.rm = TRUE)
+
+# Small preview table
+knitr::kable(
+  head(county_means, 10),
+  digits = 2,
+  caption = "Average asthma hospitalization rate by county (sample of first 10)"
+) %>%
+  kable_styling(bootstrap_options = "striped", full_width = FALSE)
+
+
+# Loading California county polygons from 'maps'
+ca_map <- map_data("county")
+ca_map_ca <- subset(ca_map, region == "california")  # keep CA only
+
+# Name check & standardize
+#    The maps data are in lowercase (e.g., 'los angeles'), while CHHS is Title Case (e.g., 'Los Angeles').
+#    Standardizeing  both to lowercase so they match exactly before merging.
+ca_map_ca$subregion   <- tolower(ca_map_ca$subregion)
+county_means$COUNTY   <- tolower(county_means$COUNTY)
+
+
+# 4) Mergeing polygons with data 
+map_joined <- merge(ca_map_ca, county_means,
+                    by.x = "subregion", by.y = "COUNTY",
+                    all.x = TRUE)
+
+# 5) Choropleth map of average rates (2015–2022)
+ggplot(map_joined, aes(x = long, y = lat, group = group, fill = RATE)) +
+  geom_polygon(color = "white", linewidth = 0.25) +
+  coord_fixed(1.3) +
+  scale_fill_gradient(
+    low = "white", high = "firebrick",
+    na.value = "grey90",
+    name = "Avg hospitalization rate\n(per 10 000 residents)"
+  ) +
+  labs(
+    title = "Figure 5.1 – Geographic Distribution of Asthma Hospitalization Rates in California",
+    subtitle = "Average age-adjusted rate by county, 2015–2022 (darker = higher burden)"
+  ) +
+  theme_void() +
+  theme(
+    plot.title    = element_text(hjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+
+#  Regional summary using a simple North/Central/South binning
+#    Define regions using county names (example grouping — adjust if your course provided a specific list).
+northern <- c("butte","shasta","humboldt","tehama","siskiyou","del norte",
+              "plumas","nevada","lassen","trinity","modoc","sutter","yuba",
+              "colusa","lake","mendocino","placer","el dorado","sonoma")
+central  <- c("fresno","kern","kings","madera","merced","san joaquin",
+              "stanislaus","tulare","monterey","san benito","turlock")  # 'turlock' line can be removed if not present
+southern <- c("los angeles","orange","riverside","san bernardino","san diego",
+              "ventura","santa barbara","imperial")
+
+county_means$REGION <- ifelse(county_means$COUNTY %in% northern, "Northern",
+                       ifelse(county_means$COUNTY %in% central,  "Central",
+                       ifelse(county_means$COUNTY %in% southern, "Southern", "Other")))
+
+region_avg <- aggregate(RATE ~ REGION, data = county_means, FUN = mean, na.rm = TRUE)
+
+knitr::kable(
+  region_avg[order(-region_avg$RATE), ],
+  digits = 2,
+  caption = "Average asthma hospitalization rate by region (2015–2022)"
+) %>%
+  kable_styling(bootstrap_options = "striped", full_width = FALSE)
+
+
+```
+
+**Summary:**
+
+The map in Figure 5.1 shows that asthma hospitalization rates are not the same across California. Some inland and Central Valley counties have much higher averages compared to coastal areas. For example, Mono (12.00 per 10 000 residents), Lassen (6.56), Lake (6.47), and Fresno (6.40) reported some of the highest average rates, while coastal or urban counties like Los Angeles (5.12) and San Francisco (4.80) were more moderate. Counties such as Sonoma, Ventura, and Placer had the lowest averages overall.
+
+From the regional summary table, the Central region (4.38) showed the highest average rate, followed by the Other (3.84), Southern (3.77), and Northern (3.68) regions. This means that Central California tends to have a heavier asthma burden than the rest of the state. The darker shading in the inland parts of the map also supports this trend.
+
+Overall, there seems to be a clear difference between inland and coastal regions, with inland and Central Valley areas having higher hospitalization rates. This could be related to factors like **air** quality, agricultural exposure, or differences in healthcare access in these regions.
+
+**Conclusion:**\
+Between 2015 and 2022, California’s age-adjusted asthma hospitalization rates showed a clear statewide decline from approximately 6 to 2 hospitalizations per 10 000 residents, reaching their lowest levels in 2020 during the COVID-19 pandemic. This reduction was followed by a modest increase through 2022, reflecting a gradual return to pre-pandemic health-care utilization.
+
+Spatially, Central Valley and inland counties—including Fresno, Kern, and Lassen—consistently exhibited higher asthma hospitalization burdens compared with coastal areas such as Ventura and Sonoma. These geographic disparities likely reflect differences in air quality, population density, and access to preventive care.
+
+Overall, there seems to be a clear difference between inland and coastal regions, with inland and Central Valley areas having higher hospitalization rates. This could be related to factors like **air** quality, agricultural exposure, or differences in healthcare access in these regions.
